@@ -10,6 +10,7 @@ require("@geckos.io/phaser-on-nodejs");
 const { SnapshotInterpolation } = require("@geckos.io/snapshot-interpolation");
 const SI = new SnapshotInterpolation();
 const Phaser = require("phaser");
+const { runInThisContext } = require("vm");
 
 class Dude extends Phaser.Physics.Arcade.Sprite {
 	constructor(scene, x, y) {
@@ -18,6 +19,7 @@ class Dude extends Phaser.Physics.Arcade.Sprite {
 		this.score = 0;
 		this.socketId = "";
 		this.playerName = "Player";
+		this.movement = {};
 
 		scene.add.existing(this);
 		scene.physics.add.existing(this);
@@ -105,6 +107,10 @@ class ServerScene extends Phaser.Scene {
 				const speed = 200;
 				const jump = 400;
 
+				dude.movement = {
+					left: left,
+					right: right,
+				};
 				if (left) dude.setVelocityX(-speed);
 				else if (right) dude.setVelocityX(speed);
 				else dude.setVelocityX(0);
@@ -165,7 +171,7 @@ class ServerScene extends Phaser.Scene {
 		const dudes = [];
 		this.players.forEach(player => {
 			const { socket, dude } = player;
-			dudes.push({ id: socket.id, x: dude.x, y: dude.y, score: dude.score, playerName: dude.playerName });
+			dudes.push({ id: socket.id, x: dude.x, y: dude.y, score: dude.score, playerName: dude.playerName, movement: dude.movement });
 		});
 
 		const stars = [];
@@ -179,7 +185,7 @@ class ServerScene extends Phaser.Scene {
 		this.players.forEach(player => {
 			const { socket } = player;
 			socket.emit("snapshot", { snapshot, stars });
-		})
+		});
 	}
 }
 
@@ -189,13 +195,17 @@ const config = {
 	height: 600,
 	banner: false,
 	audio: false,
-	scene: [ServerScene],
 	physics: {
 		default: "arcade",
 		arcade: {
 			gravity: { y: 300. },
 		}
-	}
+	},
+	fps: {
+		target: 1000,
+		forceSetTimeOut: true,
+	},
+	scene: [ServerScene],
 }
 
 const game = new Phaser.Game(config);
