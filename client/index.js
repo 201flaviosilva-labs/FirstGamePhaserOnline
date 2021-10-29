@@ -15,10 +15,17 @@ class MainScene extends Phaser.Scene {
   }
 
   init() {
+    this.playerName = "Player" + randomNumber(0, 1000);
     this.dudes = new Map();
+
     this.stars = [];
     this.starsSnapShot = [];
-    this.lastStarId = [];
+    this.lastStarsId = [];
+
+    this.bombs = [];
+    this.bombsSnapShot = [];
+    this.lastBombsId = [];
+
     this.cursors;
 
     this.socket = io();
@@ -40,6 +47,7 @@ class MainScene extends Phaser.Scene {
     this.cursors = this.input.keyboard.createCursorKeys();
     this.scoreLabel = this.add.text(16, 16, "Score: 0");
 
+    // Animations
     this.anims.create({
       key: "left",
       frames: this.anims.generateFrameNumbers("Dude", {
@@ -67,6 +75,8 @@ class MainScene extends Phaser.Scene {
       repeat: -1,
     });
 
+    // Socket Events
+
     this.socket.on("createWorld", data => {
       for (let i = 0; i < data.platformsPosition.length; i++) {
         this.add.image(data.platformsPosition[i].x, data.platformsPosition[i].y, "Platform");
@@ -75,13 +85,27 @@ class MainScene extends Phaser.Scene {
 
     this.socket.on("snapshot", data => {
       this.starsSnapShot = data.stars;
+      this.bombsSnapShot = data.bombs;
       SI.snapshot.add(data.snapshot);
     });
 
     // Update Player Name
-    document.getElementById("updateName").addEventListener("click", () => {
-      const playerName = prompt("Player name:", "Player") || "Player" + randomNumber(0, 1000);
-      this.socket.emit("updateName", { playerName: playerName, id: this.socket.id });
+    document.getElementById("updateName").addEventListener("click", () => this.updateName());
+    this.updateName();
+
+    this.socket.emit("gameReady");
+  }
+
+  updateName() {
+    Swal.fire({
+      title: "Player Name:",
+      input: "text",
+      inputValue: this.playerName,
+      showCancelButton: true,
+      showLoaderOnConfirm: true,
+    }).then(result => {
+      this.playerName = result.value || this.playerName;
+      this.socket.emit("updateName", { playerName: this.playerName, id: this.socket.id });
     });
   }
 
@@ -140,7 +164,7 @@ class MainScene extends Phaser.Scene {
     // Stars
     const newStarsId = [];
     this.starsSnapShot.forEach(star => {
-      if (!this.lastStarId.includes(star.id)) {
+      if (!this.lastStarsId.includes(star.id)) {
         const newStar = this.add.sprite(star.x, star.y, "Star");
         newStar.id = star.id;
         this.stars.push(newStar);
@@ -154,7 +178,7 @@ class MainScene extends Phaser.Scene {
 
         // Remove Stars
         for (let i = 0; i < this.stars.length; i++) {
-          if (!this.lastStarId.includes(this.stars[i].id)) {
+          if (!this.lastStarsId.includes(this.stars[i].id)) {
             this.stars[i].destroy();
             this.stars.splice(i, 1);
             break;
@@ -163,7 +187,35 @@ class MainScene extends Phaser.Scene {
       }
       newStarsId.push(star.id);
     });
-    this.lastStarId = newStarsId;
+    this.lastStarsId = newStarsId;
+
+    // Bombs
+    const newBombsId = [];
+    this.bombsSnapShot.forEach(bomb => {
+      if (!this.lastBombsId.includes(bomb.id)) {
+        const newBomb = this.add.sprite(bomb.x, bomb.y, "Bomb");
+        newBomb.id = bomb.id;
+        this.bombs.push(newBomb);
+      } else {
+        for (let i = 0; i < this.bombs.length; i++) {
+          if (this.bombs[i].id === bomb.id) {
+            this.bombs[i].setX(bomb.x);
+            this.bombs[i].setY(bomb.y);
+          }
+        }
+
+        // Remove Bombs
+        for (let i = 0; i < this.bombs.length; i++) {
+          if (!this.lastBombsId.includes(this.bombs[i].id)) {
+            this.bombs[i].destroy();
+            this.bombs.splice(i, 1);
+            break;
+          }
+        }
+      }
+      newBombsId.push(bomb.id);
+    });
+    this.lastBombsId = newBombsId;
 
     const movement = {
       left: this.cursors.left.isDown,
@@ -177,18 +229,20 @@ class MainScene extends Phaser.Scene {
 }
 
 const config = {
+  width: 800,
+  height: 600,
+  parent: "game-container",
   scale: {
     mode: Phaser.Scale.FIT,
-    width: 800,
-    height: 600,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [MainScene],
   physics: {
     default: "arcade",
     arcade: {
       debug: false,
     },
   },
+  scene: [MainScene],
 }
 
 window.addEventListener("load", () => {

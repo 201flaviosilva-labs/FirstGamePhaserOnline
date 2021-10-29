@@ -12,6 +12,20 @@ const SI = new SnapshotInterpolation();
 const Phaser = require("phaser");
 const { runInThisContext } = require("vm");
 
+class Platform extends Phaser.Physics.Arcade.Sprite {
+	constructor(scene, x, y) {
+		super(scene, x, y, "");
+
+		scene.add.existing(this);
+		scene.physics.add.existing(this);
+
+		this.body.setSize(400, 32);
+		this.body.setMaxVelocity(0);
+		this.setImmovable(true);
+		this.setCollideWorldBounds(true);
+	}
+}
+
 class Dude extends Phaser.Physics.Arcade.Sprite {
 	constructor(scene, x, y) {
 		super(scene, x, y, "");
@@ -45,18 +59,20 @@ class Star extends Phaser.Physics.Arcade.Sprite {
 		this.setVelocity(Phaser.Math.Between(-200, 200), Phaser.Math.Between(-200, 200));
 	}
 }
-
-class Platform extends Phaser.Physics.Arcade.Sprite {
+class Bomb extends Phaser.Physics.Arcade.Sprite {
 	constructor(scene, x, y) {
 		super(scene, x, y, "");
+
+		this.id = Math.random();
 
 		scene.add.existing(this);
 		scene.physics.add.existing(this);
 
-		this.body.setSize(400, 32);
-		this.body.setMaxVelocity(0);
-		this.setImmovable(true);
+		this.body.setSize(14, 14);
 		this.setCollideWorldBounds(true);
+		this.setBounce(1);
+		this.setRandomPosition(0, 0, scene.game.config.width, scene.game.config.height);
+		this.setVelocity(Phaser.Math.Between(-200, 200), Phaser.Math.Between(-200, 200));
 	}
 }
 
@@ -67,6 +83,7 @@ class ServerScene extends Phaser.Scene {
 		this.players = new Map();
 		this.platforms = [];
 		this.stars = [];
+		this.bombs = [];
 
 		this.mainsSocket = null;
 	}
@@ -89,14 +106,36 @@ class ServerScene extends Phaser.Scene {
 		io.on("connection", socket => {
 			this.mainsSocket = socket;
 
+			// Phaser Objects
 			const x = Math.random() * 800 + 20;
 			const dude = new Dude(this, x, 200);
 			dude.socketId = socket.id;
+			this.players.set(socket.id, { socket, dude: dude, });
 
-			setTimeout(() => { this.mainsSocket.emit("createWorld", { platformsPosition: platformsPosition, }); }, 1000);
 			this.physics.add.collider(dude, this.platforms);
 
-			this.players.set(socket.id, { socket, dude: dude, });
+			const bomb = new Bomb(this, 0, 0);
+			for (let i = 0; i < this.platforms.length; i++) { // Platform Collisions
+				this.physics.add.collider(bomb, this.platforms[i]);
+			}
+			for (let i = 0; i < this.stars.length; i++) { // Star Collisions
+				this.physics.add.collider(bomb, this.stars[i]);
+			}
+			for (let i = 0; i < this.bombs.length; i++) { // Bomb Collisions
+				this.physics.add.collider(bomb, this.bombs[i]);
+			}
+			this.players.forEach(player => { // Player Collisions
+				this.physics.add.collider(bomb, player.dude, () => { dude.score--; });
+			});
+			this.bombs.push(bomb);
+
+			this.physics.add.collider(dude, this.bombs, () => { dude.score--; });
+
+
+			// Socket Events
+			socket.on("gameReady", data => {
+				socket.emit("createWorld", { platformsPosition: platformsPosition, });
+			});
 
 			socket.on("updateName", (data) => {
 				dude.playerName = data.playerName;
@@ -118,9 +157,16 @@ class ServerScene extends Phaser.Scene {
 			})
 
 			socket.on("disconnect", reason => {
+				// Destroy Player
 				const player = this.players.get(socket.id);
 				player.dude.destroy();
 				this.players.delete(socket.id);
+
+				// Destroy Bomb
+				for (let i = 0; i < this.bombs.length; i++) {
+					if (this.bombs[i].id === bomb.id) this.bombs.splice(i, 1);
+				}
+				bomb.destroy();
 			});
 		});
 	}
@@ -130,17 +176,20 @@ class ServerScene extends Phaser.Scene {
 		let isDestroyed = false;
 
 		// Add Collisions
-		for (let i = 0; i < this.platforms.length; i++) {
+		for (let i = 0; i < this.platforms.length; i++) { // Platform Collisions
 			this.physics.add.collider(newStar, this.platforms[i]);
 		}
-		for (let i = 0; i < this.stars.length; i++) {
+		for (let i = 0; i < this.stars.length; i++) { // Star Collisions
 			this.physics.add.collider(newStar, this.stars[i]);
+		}
+		for (let i = 0; i < this.bombs.length; i++) { // Bomb Collisions
+			this.physics.add.collider(newStar, this.bombs[i]);
 		}
 
 		// Destroy Star
-		this.players.forEach(player => {
+		this.players.forEach(player => { // Player Collisions
 			const { dude } = player;
-			this.physics.add.overlap(newStar, dude, () => {
+			this.physics.add.collider(newStar, dude, () => {
 				dude.score++;
 				this.destroyStar(isDestroyed, newStar);
 			});
@@ -179,12 +228,17 @@ class ServerScene extends Phaser.Scene {
 			stars.push({ id: star.id, x: star.x, y: star.y });
 		});
 
+		const bombs = [];
+		this.bombs.forEach(bomb => {
+			bombs.push({ id: bomb.id, x: bomb.x, y: bomb.y });
+		});
+
 		const snapshot = SI.snapshot.create(dudes);
 
 		// send all dudes to all players
 		this.players.forEach(player => {
 			const { socket } = player;
-			socket.emit("snapshot", { snapshot, stars });
+			socket.emit("snapshot", { snapshot, stars, bombs });
 		});
 	}
 }
